@@ -18,7 +18,7 @@
 
 //------------------------------------------------------------------------------
 // Delegate to handle orientation functions
-//------------------------------------------------------------------------------
+//--------------------------------------------- ---------------------------------
 @protocol CDVBarcodeScannerOrientationDelegate <NSObject>
 
 - (NSUInteger)supportedInterfaceOrientations;
@@ -76,6 +76,7 @@
 - (id)initWithPlugin:(CDVBarcodeScanner*)plugin callback:(NSString*)callback parentViewController:(UIViewController*)parentViewController alterateOverlayXib:(NSString *)alternateXib;
 - (void)scanBarcode;
 - (void)barcodeScanSucceeded:(NSString*)text format:(NSString*)format;
+- (void)scanBarcodeFromPhoto:(NSString*)text;
 - (void)barcodeScanFailed:(NSString*)message;
 - (void)barcodeScanCancelled;
 - (void)openDialog;
@@ -104,11 +105,15 @@
 //------------------------------------------------------------------------------
 // view controller for the ui
 //------------------------------------------------------------------------------
-@interface CDVbcsViewController : UIViewController <CDVBarcodeScannerOrientationDelegate> {}
+@interface CDVbcsViewController : UIViewController <CDVBarcodeScannerOrientationDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate> {}
 @property (nonatomic, retain) CDVbcsProcessor*  processor;
 @property (nonatomic, retain) NSString*        alternateXib;
 @property (nonatomic)         BOOL             shutterPressed;
 @property (nonatomic, retain) IBOutlet UIView* overlayView;
+@property (nonatomic, strong) UIView *maskView;
+@property (nonatomic, strong) UIView *scanWindow;
+@property (nonatomic, strong) UIView *blurBackView;
+@property (nonatomic, strong) UIImageView *scanNetImageView;
 // unsafe_unretained is equivalent to assign - used to prevent retain cycles in the property below
 @property (nonatomic, unsafe_unretained) id orientationDelegate;
 
@@ -121,6 +126,9 @@
 
 @end
 
+#define iOS8 [[UIDevice currentDevice].systemVersion floatValue] >= 8.0
+static const CGFloat kMarginH = 165;
+static const CGFloat kMargin = 60;
 //------------------------------------------------------------------------------
 // plugin class
 //------------------------------------------------------------------------------
@@ -435,6 +443,15 @@ parentViewController:(UIViewController*)parentViewController
     }
 }
 
+- (void)scanBarcodeFromPhoto:(NSString*)text {
+    [self barcodeScanDone:^{
+        [self.plugin returnSuccess:text format:@"" cancelled:FALSE flipped:FALSE callback:self.callback];
+    }];
+    if (self.isFlipped) {
+        self.isFlipped = NO;
+    }
+}
+
 - (void)flipCamera {
     self.isFlipped = YES;
     self.isFrontCamera = !self.isFrontCamera;
@@ -522,7 +539,7 @@ parentViewController:(UIViewController*)parentViewController
     else {
         return @"unable to add video capture output to session";
     }
-    
+
     [output setMetadataObjectTypes:[self formatObjectTypes]];
 
     // setup capture preview layer
@@ -628,9 +645,9 @@ parentViewController:(UIViewController*)parentViewController
     if (self.formats != nil) {
         supportedFormats = [self.formats componentsSeparatedByString:@","];
     }
-    
+
     NSMutableArray * formatObjectTypes = [NSMutableArray array];
-    
+
     if (self.formats == nil || [supportedFormats containsObject:@"QR_CODE"]) [formatObjectTypes addObject:AVMetadataObjectTypeQRCode];
     if (self.formats == nil || [supportedFormats containsObject:@"AZTEC"]) [formatObjectTypes addObject:AVMetadataObjectTypeAztecCode];
     if (self.formats == nil || [supportedFormats containsObject:@"DATA_MATRIX"]) [formatObjectTypes addObject:AVMetadataObjectTypeDataMatrixCode];
@@ -642,7 +659,7 @@ parentViewController:(UIViewController*)parentViewController
     if (self.formats == nil || [supportedFormats containsObject:@"CODE_39"]) [formatObjectTypes addObject:AVMetadataObjectTypeCode39Code];
     if (self.formats == nil || [supportedFormats containsObject:@"ITF"]) [formatObjectTypes addObject:AVMetadataObjectTypeITF14Code];
     if (self.formats == nil || [supportedFormats containsObject:@"PDF_417"]) [formatObjectTypes addObject:AVMetadataObjectTypePDF417Code];
-    
+
     return formatObjectTypes;
 }
 
@@ -873,6 +890,10 @@ parentViewController:(UIViewController*)parentViewController
 @synthesize shutterPressed = _shutterPressed;
 @synthesize alternateXib   = _alternateXib;
 @synthesize overlayView    = _overlayView;
+@synthesize maskView = _maskView;
+@synthesize scanWindow     = _scanWindow;
+@synthesize blurBackView  =_blurBackView;
+@synthesize scanNetImageView = _scanNetImageView;
 
 //--------------------------------------------------------------------------
 - (id)initWithProcessor:(CDVbcsProcessor*)processor alternateOverlay:(NSString *)alternateXib {
@@ -912,6 +933,8 @@ parentViewController:(UIViewController*)parentViewController
     [self.view.layer insertSublayer:previewLayer below:[[self.view.layer sublayers] objectAtIndex:0]];
 
     [self.view addSubview:[self buildOverlayView]];
+
+    [self.view addSubview: [self buildNavigationBar]];
 }
 
 //--------------------------------------------------------------------------
@@ -923,7 +946,21 @@ parentViewController:(UIViewController*)parentViewController
     // this fixes the bug when the statusbar is landscape, and the preview layer
     // starts up in portrait (not filling the whole view)
     self.processor.previewLayer.frame = self.view.bounds;
+
+    [self resumeAnimation];
+
+    [[UIApplication sharedApplication] setStatusBarStyle:UIStatusBarStyleLightContent];
 }
+
+- (void)viewWillDisappear:(BOOL)animated {
+//    [[UIApplication sharedApplication] setStatusBarStyle:UIStatusBarStyleDefault];
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    [[NSNotificationCenter defaultCenter]addObserver:self selector:@selector(resumeAnimation) name:@"EnterForeground" object:nil];
+}
+
 
 //--------------------------------------------------------------------------
 - (void)viewDidAppear:(BOOL)animated {
@@ -972,6 +1009,103 @@ parentViewController:(UIViewController*)parentViewController
 }
 
 //--------------------------------------------------------------------------
+- (UINavigationBar *)buildNavigationBar {
+    UINavigationBar *navigationBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 0, self.view.frame.size.width, 64)];
+    [navigationBar setBarStyle:UIBarStyleBlack];
+    [navigationBar setTranslucent:YES];
+    UINavigationItem *navItem = [[UINavigationItem alloc] initWithTitle:@"扫一扫"];
+    NSDictionary * navBarTitleTextAttributes = @{ NSForegroundColorAttributeName : [UIColor whiteColor]};
+    UIImage *backImage = [UIImage imageNamed:@"qrcode_scan_titlebar_back_nor"];
+    UIBarButtonItem *leftBtn = [[UIBarButtonItem alloc] initWithImage:backImage style:UIBarButtonItemStylePlain target:self action:@selector(cancelButtonPressed:)];
+    [leftBtn setTintColor:[UIColor whiteColor]];
+    navItem.leftBarButtonItem = leftBtn;
+
+    UIBarButtonItem *rightBtn = [[UIBarButtonItem alloc] initWithTitle:@"相册" style:UIBarButtonItemStylePlain target:self action:@selector(myAlbum)];
+    [rightBtn setTintColor:[UIColor whiteColor]];
+    navItem.rightBarButtonItem = rightBtn;
+
+    [navigationBar setItems:[NSArray arrayWithObject:navItem]];
+    [navigationBar setTitleTextAttributes:navBarTitleTextAttributes];
+    [navigationBar setClipsToBounds:true];
+    return navigationBar;
+}
+
+#pragma mark-> 我的相册
+-(void)myAlbum {
+    if([UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypePhotoLibrary]){
+        //1.初始化相册拾取器
+        UIImagePickerController *controller = [[UIImagePickerController alloc] init];
+        //2.设置代理
+        controller.delegate = self;
+        //3.设置资源：
+        /**
+         UIImagePickerControllerSourceTypePhotoLibrary,相册
+         UIImagePickerControllerSourceTypeCamera,相机
+         UIImagePickerControllerSourceTypeSavedPhotosAlbum,照片库
+         */
+        controller.sourceType = UIImagePickerControllerSourceTypeSavedPhotosAlbum;
+        //4.随便给他一个转场动画
+        controller.modalTransitionStyle=UIModalTransitionStyleFlipHorizontal;
+        controller.allowsEditing=YES;
+        [self presentViewController:controller animated:YES completion:^{
+            [[UIApplication sharedApplication] setStatusBarStyle:UIStatusBarStyleDefault];
+        }];
+
+    }else{
+
+        UIAlertView * alert = [[UIAlertView alloc]initWithTitle:@"提示" message:@"设备不支持访问相册，请在设置->隐私->照片中进行设置！" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil, nil];
+        [alert show];
+    }
+
+}
+
+
+#pragma mark-> imagePickerController delegate
+- (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary *)info
+{
+    /**这种方法是ios8之后提供的方法，ios8之前是不能用的,我尝试用之前的第三方去替代结果表示并不是很理想，很显然系统提供的api无论是从识别效率还是识别准确度上都要比第三方的强，我尝试用一个自定义背景色的二维码去被识别但是第三方提取不到信息，系统的可以提取到。这里说的取不到是在系统从相册中提取原图的时候上面的二维码信息提取不到，但是我这里把相册的编辑属性打开，取编辑之后的图片之后奇迹般的获取到了信息，真是奇葩 */
+    //1.获取选择的图片
+    UIImage *pickImage =[info objectForKey:@"UIImagePickerControllerEditedImage"];
+//    UIImageWriteToSavedPhotosAlbum(pickImage, nil, nil, nil);
+
+    [picker dismissViewControllerAnimated:YES completion:^{
+
+        [self decodeImage:pickImage];
+
+    }];
+
+
+}
+
+/**识别图片中的二维码信息 */
+-(void)decodeImage:(UIImage*)image{
+    /**这里你完全可以向下兼容没必要用ios8以上的api但是这里这么写主要是为了介绍ios8后提供的这个api，而且性能和识别率要高于第三方 */
+    if(iOS8){
+        /**ios8环境以上 */
+
+        //初始化一个监测器
+        CIDetector*detector = [CIDetector detectorOfType:CIDetectorTypeQRCode context:nil options:@{ CIDetectorAccuracy : CIDetectorAccuracyHigh }];
+        //监测到的结果数组
+        NSArray *features = [detector featuresInImage:[CIImage imageWithCGImage:image.CGImage]];
+        if (features.count >=1) {
+            /**结果对象 */
+            CIQRCodeFeature *feature = [features objectAtIndex:0];
+            NSString *scannedResult = feature.messageString;
+            // 系统自动识别成功
+            [self.processor scanBarcodeFromPhoto:scannedResult];
+
+        }
+        else{
+            UIAlertView * alertView = [[UIAlertView alloc]initWithTitle:@"提示" message:@"该图片没有包含一个二维码！" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil, nil];
+            [alertView show];
+
+        }
+    } else {
+        UIAlertView * alertView = [[UIAlertView alloc]initWithTitle:@"提示" message:@"暂不支持IOS8以下系统的二维码识别！" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil, nil];
+        [alertView show];
+    }
+}
+
 - (UIView*)buildOverlayView {
 
     if ( nil != self.alternateXib )
@@ -986,153 +1120,150 @@ parentViewController:(UIViewController*)parentViewController
     overlayView.autoresizingMask    = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     overlayView.opaque              = NO;
 
-    UIToolbar* toolbar = [[UIToolbar alloc] init];
-    toolbar.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
-
-    id cancelButton = [[[UIBarButtonItem alloc]
-                       initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
-                       target:(id)self
-                       action:@selector(cancelButtonPressed:)
-                       ] autorelease];
-
-
-    id flexSpace = [[[UIBarButtonItem alloc]
-                    initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace
-                    target:nil
-                    action:nil
-                    ] autorelease];
-
-    id flipCamera = [[[UIBarButtonItem alloc]
-                       initWithBarButtonSystemItem:UIBarButtonSystemItemCamera
-                       target:(id)self
-                       action:@selector(flipCameraButtonPressed:)
-                       ] autorelease];
-
-    NSMutableArray *items;
-
-#if USE_SHUTTER
-    id shutterButton = [[[UIBarButtonItem alloc]
-                        initWithBarButtonSystemItem:UIBarButtonSystemItemCamera
-                        target:(id)self
-                        action:@selector(shutterButtonPressed)
-                        ] autorelease];
-
-    if (_processor.isShowFlipCameraButton) {
-      items = [NSMutableArray arrayWithObjects:flexSpace, cancelButton, flexSpace, flipCamera, shutterButton, nil];
-    } else {
-      items = [NSMutableArray arrayWithObjects:flexSpace, cancelButton, flexSpace, shutterButton, nil];
-    }
-#else
-    if (_processor.isShowFlipCameraButton) {
-      items = [@[flexSpace, cancelButton, flexSpace, flipCamera] mutableCopy];
-    } else {
-      items = [@[flexSpace, cancelButton, flexSpace] mutableCopy];
-    }
-#endif
-
-    if (_processor.isShowTorchButton && !_processor.isFrontCamera) {
-      AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
-      if ([device hasTorch] && [device hasFlash]) {
-        NSURL *bundleURL = [[NSBundle mainBundle] URLForResource:@"CDVBarcodeScanner" withExtension:@"bundle"];
-        NSBundle *bundle = [NSBundle bundleWithURL:bundleURL];
-        NSString *imagePath = [bundle pathForResource:@"torch" ofType:@"png"];
-        UIImage *image = [UIImage imageWithContentsOfFile:imagePath];
-
-        id torchButton = [[[UIBarButtonItem alloc]
-                           initWithImage:image
-                                   style:UIBarButtonItemStylePlain
-                                  target:(id)self
-                                  action:@selector(torchButtonPressed:)
-                           ] autorelease];
-
-      [items insertObject:torchButton atIndex:0];
-    }
-  }
-
-    toolbar.items = items;
-
-    bounds = overlayView.bounds;
-
-    [toolbar sizeToFit];
-    CGFloat toolbarHeight  = [toolbar frame].size.height;
-    CGFloat rootViewHeight = CGRectGetHeight(bounds);
-    CGFloat rootViewWidth  = CGRectGetWidth(bounds);
-    CGRect  rectArea       = CGRectMake(0, rootViewHeight - toolbarHeight, rootViewWidth, toolbarHeight);
-    [toolbar setFrame:rectArea];
-
-    [overlayView addSubview: toolbar];
-
-    UIImage* reticleImage = [self buildReticleImage];
-    UIView* reticleView = [[[UIImageView alloc] initWithImage:reticleImage] autorelease];
-    CGFloat minAxis = MIN(rootViewHeight, rootViewWidth);
-
-    rectArea = CGRectMake(
-        (CGFloat) (0.5 * (rootViewWidth  - minAxis)),
-        (CGFloat) (0.5 * (rootViewHeight - minAxis)),
-        minAxis,
-        minAxis
-    );
-
-    [reticleView setFrame:rectArea];
-
-    reticleView.opaque           = NO;
-    reticleView.contentMode      = UIViewContentModeScaleAspectFit;
-    reticleView.autoresizingMask = (UIViewAutoresizing) (0
-        | UIViewAutoresizingFlexibleLeftMargin
-        | UIViewAutoresizingFlexibleRightMargin
-        | UIViewAutoresizingFlexibleTopMargin
-        | UIViewAutoresizingFlexibleBottomMargin)
-    ;
-
-    [overlayView addSubview: reticleView];
-
+    [overlayView addSubview: [self buildMaskView]];
+    [overlayView addSubview: [self buildScanWindowView]];
+    [overlayView addSubview:[self buildTipTitle]];
     return overlayView;
 }
 
 //--------------------------------------------------------------------------
 
-#define RETICLE_SIZE    500.0f
-#define RETICLE_WIDTH    10.0f
-#define RETICLE_OFFSET   60.0f
-#define RETICLE_ALPHA     0.4f
+- (UIView *)buildMaskView
+{
+    UIView *mask = [[UIView alloc] init];
+    _maskView = mask;
 
-//-------------------------------------------------------------------------
-// builds the green box and red line
-//-------------------------------------------------------------------------
-- (UIImage*)buildReticleImage {
-    UIImage* result;
-    UIGraphicsBeginImageContext(CGSizeMake(RETICLE_SIZE, RETICLE_SIZE));
-    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGColor *borderColor = [UIColor colorWithRed:0 green:0 blue:0 alpha:0.6].CGColor;
+    CGFloat scanWindowH = self.view.frame.size.width - kMargin * 2;
+    CGFloat scanWindowW = self.view.frame.size.width - kMargin * 2;
+    CGFloat viewW = self.view.frame.size.width;
+    CGFloat viewH = self.view.frame.size.height;
 
-    if (self.processor.is1D) {
-        UIColor* color = [UIColor colorWithRed:1.0 green:0.0 blue:0.0 alpha:RETICLE_ALPHA];
-        CGContextSetStrokeColorWithColor(context, color.CGColor);
-        CGContextSetLineWidth(context, RETICLE_WIDTH);
-        CGContextBeginPath(context);
-        CGFloat lineOffset = (CGFloat) (RETICLE_OFFSET+(0.5*RETICLE_WIDTH));
-        CGContextMoveToPoint(context, lineOffset, RETICLE_SIZE/2);
-        CGContextAddLineToPoint(context, RETICLE_SIZE-lineOffset, (CGFloat) (0.5*RETICLE_SIZE));
-        CGContextStrokePath(context);
-    }
+    mask.frame = CGRectMake(0, 0,  viewW, viewH);
 
-    if (self.processor.is2D) {
-        UIColor* color = [UIColor colorWithRed:0.0 green:1.0 blue:0.0 alpha:RETICLE_ALPHA];
-        CGContextSetStrokeColorWithColor(context, color.CGColor);
-        CGContextSetLineWidth(context, RETICLE_WIDTH);
-        CGContextStrokeRect(context,
-                            CGRectMake(
-                                       RETICLE_OFFSET,
-                                       RETICLE_OFFSET,
-                                       RETICLE_SIZE-2*RETICLE_OFFSET,
-                                       RETICLE_SIZE-2*RETICLE_OFFSET
-                                       )
-                            );
-    }
+    //TOP LAYER
+    CALayer *topBorder = [CALayer layer];
+    topBorder.frame = CGRectMake(0, 0, viewW, kMarginH);
+    [topBorder setBackgroundColor:borderColor];
+    [mask.layer addSublayer:topBorder];
 
-    result = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return result;
+    //BOTTOM LAYER
+    CALayer *bottomBoder = [CALayer layer];
+    bottomBoder.frame = CGRectMake(kMargin, scanWindowH + kMarginH, scanWindowW, viewH - kMarginH - scanWindowH);
+    [bottomBoder setBackgroundColor:borderColor];
+    [mask.layer addSublayer:bottomBoder];
+
+    //LEFT LAYER
+    CALayer *leftBorder = [CALayer layer];
+    leftBorder.frame = CGRectMake(0, kMarginH, kMargin, viewH - kMarginH);
+    [leftBorder setBackgroundColor:borderColor];
+    [mask.layer addSublayer:leftBorder];
+
+    //RIGHT LAYER
+    CALayer *rightBorder = [CALayer layer];
+    rightBorder.frame = CGRectMake(scanWindowW + kMargin, kMarginH, kMargin, viewH-kMarginH);
+    [rightBorder setBackgroundColor:borderColor];
+    [mask.layer addSublayer:rightBorder];
+    return mask;
 }
+
+- (UIView*)buildScanWindowView
+{
+    CGFloat scanWindowH = self.view.frame.size.width - kMargin * 2;
+    CGFloat scanWindowW = self.view.frame.size.width - kMargin * 2;
+    _scanWindow = [[UIView alloc] initWithFrame:CGRectMake(kMargin, kMarginH, scanWindowW, scanWindowH)];
+    _scanWindow.clipsToBounds = YES;
+    _scanWindow.layer.borderColor = [UIColor colorWithRed:1.0 green:0.50 blue:0.24 alpha:1.0].CGColor;
+    _scanWindow.layer.borderWidth = 1.0f;
+
+    _scanNetImageView = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"scan_net"]];
+
+    CGFloat buttonWH = 18;
+
+    UIButton *topLeft = [[UIButton alloc] initWithFrame:CGRectMake(0, 0, buttonWH, buttonWH)];
+    [topLeft setImage:[UIImage imageNamed:@"scan_1"] forState:UIControlStateNormal];
+    [_scanWindow addSubview:topLeft];
+
+    UIButton *topRight = [[UIButton alloc] initWithFrame:CGRectMake(scanWindowW - buttonWH, 0, buttonWH, buttonWH)];
+    [topRight setImage:[UIImage imageNamed:@"scan_2"] forState:UIControlStateNormal];
+    [_scanWindow addSubview:topRight];
+
+    UIButton *bottomLeft = [[UIButton alloc] initWithFrame:CGRectMake(0, scanWindowH - buttonWH, buttonWH, buttonWH)];
+    [bottomLeft setImage:[UIImage imageNamed:@"scan_3"] forState:UIControlStateNormal];
+    [_scanWindow addSubview:bottomLeft];
+
+    UIButton *bottomRight = [[UIButton alloc] initWithFrame:CGRectMake(topRight.frame.origin.x, bottomLeft.frame.origin.y, buttonWH, buttonWH)];
+    [bottomRight setImage:[UIImage imageNamed:@"scan_4"] forState:UIControlStateNormal];
+    [_scanWindow addSubview:bottomRight];
+    return _scanWindow;
+}
+
+
+- (UILabel *)buildTipTitle {
+    CGFloat scanWindowH = self.view.frame.size.width - kMargin * 2;
+    UILabel * tipLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, scanWindowH + kMarginH + 10, self.view.bounds.size.width, 40)];
+    tipLabel.text = @"将取景框对准二维码，即可自动扫描";
+    tipLabel.textColor = [UIColor whiteColor];
+    tipLabel.textAlignment = NSTextAlignmentCenter;
+    tipLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    tipLabel.numberOfLines = 2;
+    tipLabel.font=[UIFont systemFontOfSize:12];
+    tipLabel.backgroundColor = [UIColor clearColor];
+    return tipLabel;
+}
+
+- (void)resumeAnimation
+{
+    CAAnimation *anim = [_scanNetImageView.layer animationForKey:@"translationAnimation"];
+    if(anim){
+        CFTimeInterval pauseTime = _scanNetImageView.layer.timeOffset;
+        CFTimeInterval beginTime = CACurrentMediaTime() - pauseTime;
+
+        [_scanNetImageView.layer setTimeOffset:0.0];
+        [_scanNetImageView.layer setBeginTime:beginTime];
+
+        [_scanNetImageView.layer setSpeed:1.0];
+
+    } else{
+
+        CGFloat scanNetImageViewH = 241;
+        CGFloat scanWindowH = self.view.frame.size.width - kMargin * 2;
+        CGFloat scanNetImageViewW = _scanWindow.frame.size.width;
+
+        _scanNetImageView.frame = CGRectMake(0, -scanNetImageViewH, scanNetImageViewW, scanNetImageViewH);
+        CABasicAnimation *scanNetAnimation = [CABasicAnimation animation];
+        scanNetAnimation.keyPath = @"transform.translation.y";
+        scanNetAnimation.byValue = @(scanWindowH);
+        scanNetAnimation.duration = 1.0;
+        scanNetAnimation.repeatCount = MAXFLOAT;
+        [_scanNetImageView.layer addAnimation:scanNetAnimation forKey:@"translationAnimation"];
+        [_scanWindow addSubview:_scanNetImageView];
+    }
+}
+
+
+- (UIView *) buildNavView {
+    CGFloat SCREEN_WIDTH = self.view.frame.size.width;
+    if (_blurBackView == nil) {
+        _blurBackView = [UIView new];
+        _blurBackView.frame = CGRectMake(0, 0, SCREEN_WIDTH, 64);
+        CAGradientLayer *gradientLayer = [[CAGradientLayer alloc] init];
+        gradientLayer.frame = CGRectMake(0, 0, SCREEN_WIDTH, 64);
+        UIColor *color = [UIColor colorWithRed:4/255.0 green:0 blue:18/255.0 alpha:0.76];
+        UIColor *color2 = [UIColor colorWithRed:4/255.0 green:0 blue:18/255.0 alpha:0.28];
+        gradientLayer.colors = [NSArray arrayWithObjects:
+                                (id)[color CGColor],
+                                (id)[color2 CGColor], nil];
+        gradientLayer.startPoint = CGPointMake(0, 0);
+        gradientLayer.endPoint = CGPointMake(0, 1.0);
+        [_blurBackView.layer addSublayer:gradientLayer];
+        _blurBackView.userInteractionEnabled = NO;
+        _blurBackView.alpha = 0.5;
+    }
+    return _blurBackView;
+
+}
+
 
 #pragma mark CDVBarcodeScannerOrientationDelegate
 
