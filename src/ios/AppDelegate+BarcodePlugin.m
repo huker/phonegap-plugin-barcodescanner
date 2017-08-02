@@ -1,8 +1,9 @@
 #import "AppDelegate+BarcodePlugin.h"
+#import <objc/runtime.h>
 
 @implementation AppDelegate (CDVBarcodeScanner)
 
-void swizzleMethod(Class c, SEL originalSelector)
+void swizzleCDVBarcodeScannerMethod(Class c, SEL originalSelector)
 {
     NSString *original = NSStringFromSelector(originalSelector);
 
@@ -37,7 +38,7 @@ void swizzleMethod(Class c, SEL originalSelector)
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         Class cls = [self class];
-        swizzleMethod(cls, @selector(applicationWillEnterForeground:));
+        swizzleCDVBarcodeScannerMethod(cls, @selector(applicationWillEnterForeground:));
     });
 }
 
