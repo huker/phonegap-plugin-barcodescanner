@@ -27,6 +27,20 @@
 
 @end
 
+#define    CC_ScreenWidth   [UIScreen mainScreen].bounds.size.width
+#define    CC_ScreenHeight  [UIScreen mainScreen].bounds.size.height
+#define    IS_iPhoneX (CC_ScreenWidth == 375.f && CC_ScreenHeight == 812.f ? YES : NO)
+#define    IS_11 (IsAtLeastiOSVersion(@"11.0"))
+#define    CC_NavigationBarHeight  44.f
+#define    CC_StatusBarHeight (IS_iPhoneX ? 44.f : 20.f)
+//ios11之前view webview距离顶部的高度为44, navbar的frame为0,0,screen_width, 64
+//ios11之后view
+//1 .如果不是iphonex webview距离顶部的距离为44+CC_StatusBarHeight, navbar的fame为0, 20, screen_width, 44
+//2. 如果是iphonex webview距离顶部的距离为44+CC_StatusBarHeight, navbar的frmae为0, 40, screen_width, 44
+#define    TOP_NAV (IS_11 ? CC_StatusBarHeight : 0)
+#define    TOP_WEBVIEW (IS_11 ? CC_NavigationBarHeight + CC_StatusBarHeight : CC_NavigationBarHeight)
+#define    CC_NavBarHeight (IS_11 ? CC_NavigationBarHeight : CC_NavigationBarHeight + CC_StatusBarHeight)
+
 //------------------------------------------------------------------------------
 // Adds a shutter button to the UI, and changes the scan from continuous to
 // only performing a scan when you click the shutter button.  For testing.
@@ -950,10 +964,21 @@ parentViewController:(UIViewController*)parentViewController
     [self resumeAnimation];
 
     [[UIApplication sharedApplication] setStatusBarStyle:UIStatusBarStyleLightContent];
+    [self setStatusBarBackgroundColor:[UIColor colorWithRed:0.20 green:0.20 blue:0.20 alpha:1]];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
 //    [[UIApplication sharedApplication] setStatusBarStyle:UIStatusBarStyleDefault];
+    [self setStatusBarBackgroundColor:[UIColor clearColor]];
+}
+
+//设置状态栏颜色
+- (void)setStatusBarBackgroundColor:(UIColor *)color {
+
+    UIView *statusBar = [[[UIApplication sharedApplication] valueForKey:@"statusBarWindow"] valueForKey:@"statusBar"];
+    if ([statusBar respondsToSelector:@selector(setBackgroundColor:)]) {
+        statusBar.backgroundColor = color;
+    }
 }
 
 - (void)viewDidLoad {
@@ -1010,8 +1035,8 @@ parentViewController:(UIViewController*)parentViewController
 
 //--------------------------------------------------------------------------
 - (UINavigationBar *)buildNavigationBar {
-    UINavigationBar *navigationBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 0, self.view.frame.size.width, 64)];
-    [navigationBar setBarStyle:UIBarStyleBlack];
+    UINavigationBar *navigationBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, TOP_NAV, self.view.frame.size.width, CC_NavBarHeight)];
+    [navigationBar setBarTintColor:[UIColor colorWithRed:0.13 green:0.13 blue:0.13 alpha:1.00]];
     [navigationBar setTranslucent:YES];
     UINavigationItem *navItem = [[UINavigationItem alloc] initWithTitle:@"扫一扫"];
     NSDictionary * navBarTitleTextAttributes = @{ NSForegroundColorAttributeName : [UIColor whiteColor]};
