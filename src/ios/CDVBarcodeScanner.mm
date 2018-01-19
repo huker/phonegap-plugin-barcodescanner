@@ -1045,9 +1045,9 @@ parentViewController:(UIViewController*)parentViewController
     [leftBtn setTintColor:[UIColor whiteColor]];
     navItem.leftBarButtonItem = leftBtn;
 
-    UIBarButtonItem *rightBtn = [[UIBarButtonItem alloc] initWithTitle:@"相册" style:UIBarButtonItemStylePlain target:self action:@selector(myAlbum)];
-    [rightBtn setTintColor:[UIColor whiteColor]];
-    navItem.rightBarButtonItem = rightBtn;
+    //UIBarButtonItem *rightBtn = [[UIBarButtonItem alloc] initWithTitle:@"相册" style:UIBarButtonItemStylePlain target:self action:@selector(myAlbum)];
+    //[rightBtn setTintColor:[UIColor whiteColor]];
+    //navItem.rightBarButtonItem = rightBtn;
 
     [navigationBar setItems:[NSArray arrayWithObject:navItem]];
     [navigationBar setTitleTextAttributes:navBarTitleTextAttributes];
@@ -1198,7 +1198,7 @@ parentViewController:(UIViewController*)parentViewController
     CGFloat scanWindowW = self.view.frame.size.width - kMargin * 2;
     _scanWindow = [[UIView alloc] initWithFrame:CGRectMake(kMargin, kMarginH, scanWindowW, scanWindowH)];
     _scanWindow.clipsToBounds = YES;
-    _scanWindow.layer.borderColor = [UIColor colorWithRed:1.0 green:0.50 blue:0.24 alpha:1.0].CGColor;
+_scanWindow.layer.borderColor = [UIColor colorWithRed:72/255.0 green:189/255.0 blue:1.0 alpha:1.0].CGColor;
     _scanWindow.layer.borderWidth = 1.0f;
 
     _scanNetImageView = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"scan_net"]];
