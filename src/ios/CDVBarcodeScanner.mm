@@ -378,10 +378,11 @@ parentViewController:(UIViewController*)parentViewController
 
 //--------------------------------------------------------------------------
 - (void)openDialog {
+    self.viewController.modalPresentationStyle = 0;
     [self.parentViewController
-     presentViewController:self.viewController
-     animated:self.isTransitionAnimated completion:nil
-     ];
+    presentViewController:self.viewController
+    animated:self.isTransitionAnimated completion:nil
+    ];
 }
 
 //--------------------------------------------------------------------------
@@ -975,9 +976,23 @@ parentViewController:(UIViewController*)parentViewController
 //设置状态栏颜色
 - (void)setStatusBarBackgroundColor:(UIColor *)color {
 
-    UIView *statusBar = [[[UIApplication sharedApplication] valueForKey:@"statusBarWindow"] valueForKey:@"statusBar"];
-    if ([statusBar respondsToSelector:@selector(setBackgroundColor:)]) {
-        statusBar.backgroundColor = color;
+    if (@ available (iOS 13.0, *) ) {
+        UIWindow *keyWindow = [ UIApplication sharedApplication ] .keyWindow ;
+        for (UIView *subView in keyWindow.subviews) {
+            if (subView.tag = = 109090909) {
+             [ subView removeFromSuperview ] ;
+        }
+        }
+        UIView *statusBar = [ [ UIView alloc ] initWithFrame: [ UIApplication sharedApplication ] .keyWindow.windowScene.statusBarManager.statusBarFrame ] ;
+        statusBar.backgroundColor = color ;
+        statusBar.tag = 109090909 ;
+        [ [ UIApplication sharedApplication ] .keyWindow addSubview: statusBar ] ;
+    } else {
+        UIView *statusBar = [ [ [ UIApplication sharedApplication ] valueForKey : @ "statusBarWindow" ]
+        valueForKey: @ "statusBar" ] ;
+        if ([ statusBar respondsToSelector: @ selector (setBackgroundColor :) ]) {
+            statusBar.backgroundColor = color ;
+        }
     }
 }
 
