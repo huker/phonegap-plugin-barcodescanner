@@ -979,7 +979,7 @@ parentViewController:(UIViewController*)parentViewController
     if (@ available (iOS 13.0, *) ) {
         UIWindow *keyWindow = [ UIApplication sharedApplication ] .keyWindow ;
         for (UIView *subView in keyWindow.subviews) {
-            if (subView.tag = = 109090909) {
+            if (subView.tag == 109090909) {
              [ subView removeFromSuperview ] ;
         }
         }
